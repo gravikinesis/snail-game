@@ -81,7 +81,6 @@
     <button id="findSnail">Show snail</button>
     <button id="findMe">Show me</button>
     <button id="findSalt">Nearest salt</button>
-    <button id="chaseBtn" hidden>Chase mode: off</button>
     <button id="showBoard">Leaderboard</button>
     <button id="giveUp">New snail</button>
   </div>
@@ -91,11 +90,11 @@
 
 <div class="modal" id="chaseModal" hidden>
   <div class="card">
-    <h1>Chase mode</h1>
-    <p>Chase mode uses your <b>location while the app is closed or not in use</b>, so the snail keeps following where you really are.</p>
+    <h1>Background tracking</h1>
+    <p>Background tracking uses your <b>location while the app is closed or not in use</b>, so the snail keeps following where you really are.</p>
     <p>While it's on, it is used for: moving the snail toward you, counting distance traveled, picking up salt, and alerting you about close calls, the snail catching up, and gold salt.</p>
-    <p>Your location stays on your phone. It is never shared or used for ads. A notification shows the whole time chase mode is on, and you can turn it off anytime.</p>
-    <div class="btns"><button class="primary" id="chaseYes">Turn on chase mode</button><button id="chaseNo">Not now</button></div>
+    <p>Your location stays on your phone. It is never shared or used for ads. A notification shows the whole time it's on, and you can turn it off anytime.</p>
+    <div class="btns"><button class="primary" id="chaseYes">Turn it on</button><button id="chaseNo">Not now</button></div>
   </div>
 </div>
 
@@ -104,6 +103,11 @@
     <h1>Leaderboard</h1>
     <p>Every run that ended with the snail catching you. Tap a column to sort.</p>
     <div class="board" id="boardMain"></div>
+    <div id="bgSetting" hidden style="display:grid;gap:8px">
+      <div class="label">Background tracking</div>
+      <p class="safety">On: the snail follows you with the app closed, and you get alerts. Off: saves battery, but the app only tracks you while it's open.</p>
+      <button id="chaseBtn">Background tracking: on</button>
+    </div>
     <div class="label">Backup</div>
     <p class="safety">Your snail and leaderboard live in this browser only. Copy this code somewhere safe (notes, email to yourself). Paste it back here to restore everything, even on a new phone.</p>
     <div class="btns"><button id="copyBackup">Copy backup code</button><button id="showRestore">Restore from code</button></div>
@@ -125,6 +129,7 @@
     <p>Salt crystals appear at random times. Get to one to freeze the snail where it is. The rarer the salt, the farther the walk.</p>
     <div class="key"><span><i style="background:#9b9a92"></i>Gray 1h · 150–700 m</span><span><i style="background:#2f7fd0"></i>Blue 2h · 0.7–1.3 km</span><span><i style="background:#e0aa1c"></i>Gold 4h · 1.3–2 km · rare, gone in 1h</span></div>
     <p class="safety">Stay safe: salt is placed at random, so some may land somewhere you can't or shouldn't go. Skip those. Driving away is allowed, but never use the app while you're the one driving.</p>
+    <p class="safety" id="bgNote" hidden>Snail Game uses your <b>location while the app is open, and also when it's closed or not in use</b>, so the snail can follow you, count your distance, and alert you about close calls and salt. Your location stays on your phone and is never shared or used for ads. A notification shows while tracking. You can turn background tracking off under Leaderboard.</p>
     <label class="label" for="speed">Snail speed</label>
     <select id="speed">
       <option value="0.05">Real snail · 0.05 km/h · starts 1.2 km away</option>
@@ -388,7 +393,8 @@ function locError(err){
 const CAP=window.Capacitor, NATIVE=!!(CAP && CAP.isNativePlatform && CAP.isNativePlatform());
 const PL=NATIVE?CAP.Plugins:{};
 const AD_BANNER_ID="ca-app-pub-3940256099942544/6300978111";   // Google's TEST banner. Swap for your real one before publishing.
-let chaseMode=false; try{ chaseMode=localStorage.getItem("snail-chase")==="on"; }catch(e){}
+let chaseMode=true; try{ chaseMode=localStorage.getItem("snail-chase")!=="off"; }catch(e){}   // on unless the player turned it off
+if(NATIVE) $("bgNote").hidden=false;
 let watchId=null;
 
 // Every location fix, from the browser or the app, comes through here.
@@ -430,7 +436,8 @@ function askLocation(){
   if(!NATIVE && !navigator.geolocation){ locError(null); return; }
   $("start").disabled=true; $("start").textContent="Finding you…";
   $("locMsg").hidden=false; $("locMsg").textContent="Tap Allow if your phone asks.";
-  restartWatch();
+  if(NATIVE && chaseMode) PL.LocalNotifications.requestPermissions().catch(()=>{}).finally(restartWatch);
+  else restartWatch();
 }
 
 // Notifications: live ones while the app is in the background, plus scheduled ones that
@@ -480,15 +487,15 @@ function adShown(on){
   document.documentElement.style.setProperty("--ad-h", on?"50px":"0px");
 }
 
-function setChaseLabel(){ $("chaseBtn").textContent="Chase mode: "+(chaseMode?"on":"off"); $("chaseBtn").classList.toggle("primary",chaseMode); }
+function setChaseLabel(){ $("chaseBtn").textContent="Background tracking: "+(chaseMode?"on":"off"); $("chaseBtn").classList.toggle("primary",chaseMode); }
 $("chaseBtn").onclick=()=>{
   if(chaseMode){
     chaseMode=false; try{ localStorage.setItem("snail-chase","off"); }catch(e){}
     setChaseLabel(); restartWatch();
-    toast("Chase mode off. The app only tracks you while it's open.");
+    toast("Background tracking off. The app only tracks you while it's open.");
     return;
   }
-  adShown(false); $("chaseModal").hidden=false;   // explain before asking (Google requires this)
+  $("boardModal").hidden=true; $("chaseModal").hidden=false;   // explain before asking (Google requires this)
 };
 $("chaseYes").onclick=async()=>{
   $("chaseModal").hidden=true; adShown(true);
@@ -496,7 +503,7 @@ $("chaseYes").onclick=async()=>{
   setChaseLabel();
   try{ await PL.LocalNotifications.requestPermissions(); }catch(e){}
   restartWatch();
-  toast("Chase mode on. The snail follows you even with the app closed.");
+  toast("Background tracking on. The snail follows you even with the app closed.");
 };
 $("chaseNo").onclick=()=>{ $("chaseModal").hidden=true; adShown(true); };
 
@@ -537,7 +544,7 @@ function run(me,acc){
   else spawn(me);
   setInterval(tick,2000);
   if(NATIVE){
-    $("chaseBtn").hidden=false; setChaseLabel();
+    $("bgSetting").hidden=false; setChaseLabel();
     PL.LocalNotifications.requestPermissions().catch(()=>{});
     setupAds();
   }
