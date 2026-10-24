@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Snail Game</title>
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  /* Full-screen map, one floating HUD card at the bottom, one modal for start / caught */
+  :root{
+    --slime:#5f7d3a; --shell:#8a4b2a; --ink:#1f2418; --paper:#f6f4ec; --muted:#6b705e; --danger:#b3261e;
+    --display:"Bricolage Grotesque",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  }
+  html,body{height:100%;margin:0}
+  body{font-family:var(--display);color:var(--ink);background:var(--paper)}
+  #map{position:fixed;inset:0 0 var(--ad-h,0px) 0}
+  .hud{position:fixed;left:12px;right:12px;bottom:calc(12px + var(--ad-h,0px) + env(safe-area-inset-bottom,0px));
+    background:var(--paper);border-radius:18px;padding:14px 16px;box-shadow:0 6px 24px rgba(0,0,0,.25);
+    z-index:1000;display:grid;gap:10px;max-width:480px;margin:0 auto}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .big{font-size:34px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums}
+  .bar{height:8px;border-radius:4px;background:#e2dfd2;overflow:hidden}
+  .bar>i{display:block;height:100%;width:0;background:var(--slime);transition:width .5s,background .5s}
+  .danger .big{color:var(--danger)} .danger .bar>i{background:var(--danger)}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  button{font:inherit;font-weight:500;border:0;border-radius:12px;padding:10px 14px;cursor:pointer;background:#e2dfd2;color:var(--ink)}
+  button.primary{background:var(--slime);color:#fff}
+  button:focus-visible{outline:3px solid var(--shell);outline-offset:2px}
+  .modal{position:fixed;inset:0;z-index:2000;background:rgba(31,36,24,.6);display:grid;place-items:center;padding:16px}
+  .card{background:var(--paper);border-radius:22px;padding:24px;max-width:380px;display:grid;gap:14px}
+  .card h1{margin:0;font-size:40px;font-weight:800;line-height:1}
+  .card p{margin:0;line-height:1.45;color:#3b4030}
+  select{font:inherit;padding:8px;border-radius:10px;border:1px solid #cfccbf;background:#fff}
+  .snail{font-size:34px;line-height:1;filter:drop-shadow(0 2px 2px rgba(0,0,0,.35))}
+  .me{width:18px;height:18px;border-radius:50%;background:#2f6fde;border:3px solid #fff;box-shadow:0 0 0 2px rgba(47,111,222,.4)}
+  .salt{width:20px;height:20px;border-radius:5px;transform:rotate(45deg);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+  .salt.gray{background:#9b9a92}
+  .salt.blue{background:#2f7fd0}
+  .salt.gold{background:#e0aa1c;box-shadow:0 0 0 3px rgba(224,170,28,.35),0 0 14px 4px rgba(224,170,28,.7)}
+  .frozen{display:flex;justify-content:space-between;gap:12px;background:#dfeaf6;color:#1d4e80;border-radius:10px;padding:8px 10px}
+  .hud.paused .bar>i{background:#2f7fd0}
+  .toast{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:3000;
+    background:var(--ink);color:#fff;padding:10px 16px;border-radius:12px;font-weight:500;box-shadow:0 6px 20px rgba(0,0,0,.3);max-width:calc(100% - 32px);text-align:center}
+  .key{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:13px}
+  .key span{display:flex;align-items:center;gap:6px}
+  .key i{width:12px;height:12px;border-radius:3px;transform:rotate(45deg);display:inline-block}
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .stat{background:#ebe8dc;border-radius:12px;padding:10px 12px}
+  .stat b{display:block;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  .board{overflow-x:auto;max-height:40vh;overflow-y:auto}
+  .board table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+  .board th{position:sticky;top:0;background:var(--paper);text-align:right;font-weight:500;color:var(--muted);padding:6px 4px;cursor:pointer;white-space:nowrap}
+  .board th:first-child,.board td:first-child{text-align:left}
+  .board th.on{color:var(--ink);text-decoration:underline}
+  .board td{text-align:right;padding:6px 4px;border-top:1px solid #e2dfd2;white-space:nowrap}
+  .board tr.me td{background:#e6efd9;font-weight:500}
+  .card{max-height:calc(100vh - 32px);overflow-y:auto}
+  button.skip{margin-top:8px;padding:6px 10px;font-size:13px}
+  .safety{font-size:13px;color:var(--muted)}
+  textarea{font-family:var(--mono);font-size:12px;width:100%;box-sizing:border-box;min-height:80px;border-radius:10px;border:1px solid #cfccbf;padding:8px;background:#fff;color:var(--ink)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="hud" id="hud" hidden>
+  <div class="row">
+    <div><div class="label">Snail distance</div><div class="big" id="dist">–</div></div>
+    <div style="text-align:right"><div class="label">Caught in, if you stay put</div><div class="mono" id="eta">–</div></div>
+  </div>
+  <div class="frozen mono" id="frozen" hidden><span>🧂 Snail frozen</span><span id="frozenLeft"></span></div>
+  <div class="frozen mono" id="goldRow" hidden style="background:#f7ebc4;color:#7a5a00"><span id="goldDist">Gold salt</span><span id="goldLeft"></span></div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="row mono"><span id="survived">Survived 0m</span><span id="gps">GPS…</span></div>
+  <div class="row mono" style="color:var(--muted)"><span id="walked">Traveled 0 m</span><span id="closeCount">0 close calls</span></div>
+  <div class="btns">
+    <button id="findSnail">Show snail</button>
+    <button id="findMe">Show me</button>
+    <button id="findSalt">Nearest salt</button>
+    <button id="chaseBtn" hidden>Chase mode: off</button>
+    <button id="showBoard">Leaderboard</button>
+    <button id="giveUp">New snail</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<div class="modal" id="chaseModal" hidden>
+  <div class="card">
+    <h1>Chase mode</h1>
+    <p>Chase mode uses your <b>location while the app is closed or not in use</b>, so the snail keeps following where you really are.</p>
+    <p>While it's on, it is used for: moving the snail toward you, counting distance traveled, picking up salt, and alerting you about close calls, the snail catching up, and gold salt.</p>
+    <p>Your location stays on your phone. It is never shared or used for ads. A notification shows the whole time chase mode is on, and you can turn it off anytime.</p>
+    <div class="btns"><button class="primary" id="chaseYes">Turn on chase mode</button><button id="chaseNo">Not now</button></div>
+  </div>
+</div>
+
+<div class="modal" id="boardModal" hidden>
+  <div class="card">
+    <h1>Leaderboard</h1>
+    <p>Every run that ended with the snail catching you. Tap a column to sort.</p>
+    <div class="board" id="boardMain"></div>
+    <div class="label">Backup</div>
+    <p class="safety">Your snail and leaderboard live in this browser only. Copy this code somewhere safe (notes, email to yourself). Paste it back here to restore everything, even on a new phone.</p>
+    <div class="btns"><button id="copyBackup">Copy backup code</button><button id="showRestore">Restore from code</button></div>
+    <textarea id="backupBox" hidden readonly></textarea>
+    <div id="restoreArea" hidden style="display:grid;gap:8px">
+      <textarea id="restoreBox" placeholder="Paste your backup code here"></textarea>
+      <button class="primary" id="doRestore">Restore</button>
+    </div>
+    <p class="mono" id="backupMsg" hidden></p>
+    <button id="closeBoard">Back to the map</button>
+  </div>
+</div>
+
+<div class="modal" id="startModal">
+  <div class="card">
+    <h1>🐌 The Snail</h1>
+    <p>A snail has spawned exactly one day of crawling away from you. It is crawling straight toward you, and it never stops, even when this page is closed.</p>
+    <p>You can outwalk it easily. The danger is sitting still.</p>
+    <p>Salt crystals appear at random times. Get to one to freeze the snail where it is. The rarer the salt, the farther the walk.</p>
+    <div class="key"><span><i style="background:#9b9a92"></i>Gray 1h · 150–700 m</span><span><i style="background:#2f7fd0"></i>Blue 2h · 0.7–1.3 km</span><span><i style="background:#e0aa1c"></i>Gold 4h · 1.3–2 km · rare, gone in 1h</span></div>
+    <p class="safety">Stay safe: salt is placed at random, so some may land somewhere you can't or shouldn't go. Skip those. Driving away is allowed, but never use the app while you're the one driving.</p>
+    <label class="label" for="speed">Snail speed</label>
+    <select id="speed">
+      <option value="0.05">Real snail · 0.05 km/h · starts 1.2 km away</option>
+      <option value="0.3" selected>Determined snail · 0.3 km/h · starts 7.2 km away</option>
+      <option value="2">Unholy snail · 2 km/h · starts 48 km away</option>
+    </select>
+    <button class="primary" id="start">Allow location &amp; release the snail</button>
+    <p id="locMsg" class="mono" hidden></p>
+  </div>
+</div>
+
+<div class="modal" id="caughtModal" hidden>
+  <div class="card">
+    <h1>Caught.</h1>
+    <p id="caughtText"></p>
+    <div class="stats" id="runStats"></div>
+    <div class="label">Leaderboard</div>
+    <div class="board" id="boardCaught"></div>
+    <button class="primary" id="again">New snail</button>
+  </div>
+</div>
+
+<script src="lib/leaflet.js"></script>
+<script>
+const KEY = "snail-game-v4";   // bumped: clears games started before the 24h head start
+const CATCH_M = 30;          // GPS is fuzzy, so the snail "reaches" you within 30 m
+const LATCH_MS = 30*1000;    // ...and has to stay that close for 30 s before you're caught
+const MAX_ACCURACY_M = 100;  // location fixes worse than this are ignored
+const HEAD_START_H = 24;   // snail always spawns 24 hours of crawling away
+const RUNS_KEY = "snail-runs-v1";
+const CLOSE_CALL_M = 100, CLOSE_RESET_M = 150;   // must get back past 150 m before another close call counts
+const SALT = {               // rarer salt spawns farther away
+  gray:{hours:1, minM:150,  maxM:700,  name:"Gray salt"},
+  blue:{hours:2, minM:701,  maxM:1300, name:"Blue salt"},
+  gold:{hours:4, minM:1301, maxM:2000, name:"Gold salt"},
+};
+const BLUE_CHANCE = 1/3;                          // regular spawns: gray twice as common as blue
+const SALT_MAX_ON_MAP = 4, SALT_PICKUP_M = 30;    // max salt on the map at once, all colors
+const SALT_GAP_MIN_H = 2, SALT_GAP_MAX_H = 6;     // gray/blue appear at a random time in this window
+const GOLD_GAP_MIN_H = 36, GOLD_GAP_MAX_H = 60;   // gold: about once every 2 days, random time
+const GOLD_LIFETIME_MS = 60*60*1000;              // gold vanishes after 1 hour
+
+const $ = id => document.getElementById(id);
+let state = load();          // {snail:{lat,lng}, me:{lat,lng}, speedKmh, startedAt, lastTick, caughtAt}
+let map, meMarker, snailMarker, line, saltLayer, saltMarkers = {};
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
+function normalize(){ if(state){ state.salts ||= []; state.nextSaltAt ||= 0; state.nextGoldAt ||= Date.now()+goldGap(); state.pausedUntil ||= 0; state.walkedM ||= 0; state.closeCalls ||= 0; state.saltGrabbed ||= 0; state.lastFix ||= state.me; } }
+normalize();
+function loadRuns(){ try{ return JSON.parse(localStorage.getItem(RUNS_KEY))||[]; }catch(e){ return []; } }
+function saveRuns(r){ try{ localStorage.setItem(RUNS_KEY, JSON.stringify(r)); }catch(e){} }
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+
+function distM(a,b){
+  const R=6371000, toR=Math.PI/180;
+  const dLat=(b.lat-a.lat)*toR, dLng=(b.lng-a.lng)*toR;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function offset(p, meters, bearing){
+  const R=6371000, d=meters/R, b=bearing, la=p.lat*Math.PI/180, lo=p.lng*Math.PI/180;
+  const la2=Math.asin(Math.sin(la)*Math.cos(d)+Math.cos(la)*Math.sin(d)*Math.cos(b));
+  const lo2=lo+Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(la),Math.cos(d)-Math.sin(la)*Math.sin(la2));
+  return {lat:la2*180/Math.PI, lng:lo2*180/Math.PI};
+}
+function fmtDist(m){ return m>=1000 ? (m/1000).toFixed(2)+" km" : Math.round(m)+" m"; }
+function fmtDur(ms){
+  const s=Math.max(0,ms/1000), d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m ${Math.floor(s%60)}s` : `${Math.floor(s)}s`;
+}
+
+// Move the snail toward the player's last known position for the time that has passed.
+function tick(){
+  if(!state || state.caughtAt || !state.me || waitingForFix) return;
+  const now=Date.now();
+  const movingFrom=Math.max(state.lastTick, state.pausedUntil);   // frozen time doesn't count
+  const dt=Math.max(0,(now-movingFrom)/1000);
+  state.lastTick=now;
+  if(dt>0){
+    const speed=state.speedKmh/3.6;           // m/s
+    const d=distM(state.snail,state.me), step=speed*dt;
+    if(d<=CATCH_M || d-step<=CATCH_M){
+      // the snail reaches you; note when it actually arrived (it may have been while the page was closed)
+      if(d>CATCH_M){ const f=(d-CATCH_M)/d; state.snail={lat:state.snail.lat+(state.me.lat-state.snail.lat)*f, lng:state.snail.lng+(state.me.lng-state.snail.lng)*f}; }
+      if(!state.latchedAt){
+        state.latchedAt=movingFrom+Math.max(0,d-CATCH_M)/speed*1000;
+        if(now-state.latchedAt<LATCH_MS){ toast("The snail is on you. Move!"); if(navigator.vibrate) navigator.vibrate([400,150,400,150,400]); }
+      }
+    } else {
+      const f=step/d;
+      state.snail={lat:state.snail.lat+(state.me.lat-state.snail.lat)*f, lng:state.snail.lng+(state.me.lng-state.snail.lng)*f};
+    }
+  }
+  if(state.latchedAt){
+    if(distM(state.snail,state.me)>CATCH_M || now<state.pausedUntil) state.latchedAt=null;   // you got away, or salt froze it
+    else if(now-state.latchedAt>=LATCH_MS) state.caughtAt=state.latchedAt+LATCH_MS;
+  }
+  const gap=distM(state.snail,state.me);
+  if(!state.caughtAt){
+    if(gap<CLOSE_CALL_M && !state.inClose){ state.inClose=true; state.closeCalls++; toast(`Close call! The snail is ${Math.round(gap)} m away.`); if(navigator.vibrate) navigator.vibrate([200,100,200]); }
+    else if(gap>CLOSE_RESET_M) state.inClose=false;
+    collectSalts(now); manageSalts(now);
+  } else if(!state.recorded) recordRun();
+  save(); render();
+}
+
+function randomSalt(around,type){
+  const t=SALT[type];
+  const pos=offset(around, t.minM+Math.random()*(t.maxM-t.minM), Math.random()*2*Math.PI);
+  return {id:Date.now()+"-"+Math.random().toString(36).slice(2,7), type, lat:pos.lat, lng:pos.lng};
+}
+function saltGap(){ return (SALT_GAP_MIN_H+Math.random()*(SALT_GAP_MAX_H-SALT_GAP_MIN_H))*3600000; }
+function goldGap(){ return (GOLD_GAP_MIN_H+Math.random()*(GOLD_GAP_MAX_H-GOLD_GAP_MIN_H))*3600000; }
+function manageSalts(now){
+  // gold that wasn't grabbed in time melts away
+  const before=state.salts.length;
+  state.salts=state.salts.filter(s=>!(s.expiresAt && s.expiresAt<=now));
+  if(state.salts.length<before) toast("The gold salt vanished.");
+  // gray and blue, near where you are now
+  if(now>=state.nextSaltAt){
+    if(state.salts.length<SALT_MAX_ON_MAP)
+      state.salts.push(randomSalt(state.me, Math.random()<BLUE_CHANCE?"blue":"gray"));
+    state.nextSaltAt=now+saltGap();
+  }
+  // gold, rare and short-lived
+  if(now>=state.nextGoldAt){
+    if(!state.salts.some(s=>s.type==="gold")){
+      // map full? gold bumps the oldest gray or blue so it's never lost
+      if(state.salts.length>=SALT_MAX_ON_MAP) state.salts.shift();
+      const g=randomSalt(state.me,"gold"); g.expiresAt=now+GOLD_LIFETIME_MS;
+      state.salts.push(g);
+      toast(`Gold salt appeared ${fmtDist(distM(state.me,g))} away! You have 1 hour.`);
+      if(navigator.vibrate) navigator.vibrate([300,100,300,100,300]);
+    }
+    state.nextGoldAt=now+goldGap();
+  }
+}
+function collectSalts(now){
+  state.salts=state.salts.filter(s=>{
+    if(distM(state.me,s)>SALT_PICKUP_M) return true;
+    const info=SALT[s.type];
+    state.pausedUntil=Math.max(now,state.pausedUntil)+info.hours*3600000;
+    state.saltGrabbed++;
+    toast(`${info.name}! Snail frozen for ${info.hours} hour${info.hours>1?"s":""}.`);
+    if(navigator.vibrate) navigator.vibrate(120);
+    return false;
+  });
+}
+function syncSalts(){
+  const ids=new Set(state.salts.map(s=>s.id));
+  for(const id in saltMarkers) if(!ids.has(id)){ saltLayer.removeLayer(saltMarkers[id]); delete saltMarkers[id]; }
+  for(const s of state.salts) if(!saltMarkers[s.id]){
+    const info=SALT[s.type];
+    saltMarkers[s.id]=L.marker(s,{icon:L.divIcon({className:"",html:`<div class="salt ${s.type}"></div>`,iconSize:[24,24]})})
+      .bindPopup(`<b>${info.name}</b><br>Freezes the snail for ${info.hours}h.<br>Get within ${SALT_PICKUP_M} m to grab it.`+
+        (s.expiresAt?`<br><b>Vanishes at ${new Date(s.expiresAt).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</b>`:"")+
+        `<br><button class="skip" onclick="skipSalt('${s.id}')">Can't reach it · skip</button>`)
+      .addTo(saltLayer);
+  }
+}
+function recordRun(){
+  state.recorded=true;
+  const runs=loadRuns();
+  runs.push({id:state.startedAt, days:(state.caughtAt-state.startedAt)/86400000, walkedM:state.walkedM,
+             closeCalls:state.closeCalls, salt:state.saltGrabbed, speed:state.speedKmh, endedAt:state.caughtAt});
+  saveRuns(runs);
+}
+let sortKey="days";
+const COLS=[["days","Days"],["walkedM","Traveled"],["closeCalls","Close calls"],["salt","Salt"]];
+function renderBoard(el, highlight){
+  const runs=loadRuns().sort((a,b)=>b[sortKey]-a[sortKey]).slice(0,20);
+  if(!runs.length){ el.innerHTML='<p class="mono">No runs yet. Survive, then get caught.</p>'; return; }
+  const fmt={days:v=>v.toFixed(2), walkedM:fmtDist, closeCalls:v=>v, salt:v=>v};
+  el.innerHTML="<table><thead><tr><th>#</th>"+COLS.map(([k,l])=>`<th data-k="${k}" class="${k===sortKey?"on":""}">${l}</th>`).join("")+"<th>Snail</th></tr></thead><tbody>"+
+    runs.map((r,i)=>`<tr class="${r.id===highlight?"me":""}"><td>${i+1}</td>`+COLS.map(([k])=>`<td>${fmt[k](r[k])}</td>`).join("")+`<td>${r.speed} km/h</td></tr>`).join("")+"</tbody></table>";
+  el.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{ sortKey=th.dataset.k; renderBoard(el,highlight); });
+}
+// Salt in a lake, on a freeway or on private land: skip it. It isn't replaced early.
+window.skipSalt=id=>{
+  if(!state) return;
+  state.salts=state.salts.filter(s=>s.id!==id);
+  save(); render(); map.closePopup();
+  toast("Salt skipped. New salt still appears on its usual random timer.");
+};
+let toastTimer;
+function toast(text){
+  notifyNow(text);
+  const t=$("toast"); t.textContent=text; t.hidden=false;
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.hidden=true,4000);
+}
+
+function render(){
+  if(!state || !state.me) return;
+  const d=distM(state.snail,state.me);
+  meMarker.setLatLng(state.me); snailMarker.setLatLng(state.snail); line.setLatLngs([state.me,state.snail]);
+  $("dist").textContent=fmtDist(d);
+  const frozenMs=Math.max(0,state.pausedUntil-Date.now());
+  $("eta").textContent=fmtDur(Math.max(0,d-CATCH_M)/(state.speedKmh/3.6)*1000+frozenMs);
+  $("frozen").hidden=!frozenMs; $("frozenLeft").textContent=fmtDur(frozenMs)+" left";
+  $("hud").classList.toggle("paused", frozenMs>0);
+  syncSalts();
+  const gold=state.salts.find(s=>s.type==="gold");
+  $("goldRow").hidden=!gold;
+  if(gold){ $("goldDist").textContent="✨ Gold salt "+fmtDist(distM(state.me,gold))+" away"; $("goldLeft").textContent=fmtDur(gold.expiresAt-Date.now())+" left"; }
+  $("survived").textContent="Survived "+fmtDur((state.caughtAt||Date.now())-state.startedAt);
+  const pct=Math.max(0,Math.min(100,100-d/state.spawnDist*100));
+  $("bar").style.width=pct+"%";
+  $("hud").classList.toggle("danger", d<100);
+  $("walked").textContent="Traveled "+fmtDist(state.walkedM);
+  $("closeCount").textContent=state.closeCalls+" close call"+(state.closeCalls===1?"":"s");
+  if(state.caughtAt && $("caughtModal").hidden && !caughtShown){
+    caughtShown=true;
+    const days=(state.caughtAt-state.startedAt)/86400000;
+    $("caughtText").textContent=`The snail got you after ${fmtDur(state.caughtAt-state.startedAt)}.`;
+    $("runStats").innerHTML=[["Days survived",days.toFixed(2)],["Distance traveled",fmtDist(state.walkedM)],["Close calls",state.closeCalls],["Salt grabbed",state.saltGrabbed]]
+      .map(([l,v])=>`<div class="stat"><span class="label">${l}</span><b>${v}</b></div>`).join("");
+    renderBoard($("boardCaught"), state.startedAt);
+    $("caughtModal").hidden=false; adShown(false);
+    notifyNow(`Caught! The snail got you after ${fmtDur(state.caughtAt-state.startedAt)}.`);
+    cancelAlerts();
+  }
+}
+
+function spawn(me){
+  const speedKmh=parseFloat($("speed").value);
+  const dist=speedKmh*1000*HEAD_START_H;
+  state={snail:offset(me,dist,Math.random()*2*Math.PI), me, speedKmh, spawnDist:dist,
+         startedAt:Date.now(), lastTick:Date.now(), caughtAt:null, salts:[], nextSaltAt:0, nextGoldAt:Date.now()+goldGap(), pausedUntil:0, walkedM:0, closeCalls:0, saltGrabbed:0, lastFix:me, inClose:false, recorded:false};
+  caughtShown=false;
+  manageSalts(Date.now());
+  save();
+  map.fitBounds(L.latLngBounds([me,state.snail]).pad(.3));
+  render();
+}
+
+function initMap(center){
+  map=L.map("map",{zoomControl:false}).setView(center,15);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+  meMarker=L.marker(center,{icon:L.divIcon({className:"",html:'<div class="me"></div>',iconSize:[24,24]})}).addTo(map);
+  snailMarker=L.marker(center,{icon:L.divIcon({className:"",html:'<div class="snail">🐌</div>',iconSize:[34,34]})}).addTo(map);
+  saltLayer=L.layerGroup().addTo(map);
+  line=L.polyline([center,center],{color:"#8a4b2a",weight:2,dashArray:"4 6"}).addTo(map);
+  // Fallback for testing without GPS: tap the map to move yourself.
+  map.on("click",e=>{ if(!gpsOK && state){ tick(); state.me={lat:e.latlng.lat,lng:e.latlng.lng}; save(); render(); } });
+}
+
+let gpsOK=false, running=false, caughtShown=false, waitingForFix=false;
+const GEO={enableHighAccuracy:true,maximumAge:0,timeout:20000};
+
+function locError(err){
+  const msg=$("locMsg"); msg.hidden=false;
+  if(!NATIVE && !window.isSecureContext) msg.textContent="Location only works on an https:// link. Open the game from your Netlify link.";
+  else if(err && err.code===1 && NATIVE){ msg.textContent="Location is turned off for Snail Game. In the settings that open, set Location to \"Allow only while using the app\" with Precise location on, then come back and tap the button."; PL.BackgroundGeolocation.openSettings().catch(()=>{}); }
+  else if(err && err.code===1) msg.textContent="Location is blocked for this site. Allow it in your phone's settings for your browser (and turn on Precise Location), then reload this page and tap the button again.";
+  else if(err && err.code===3) msg.textContent="Your phone didn't find a GPS fix in time. Step near a window or outside and tap the button again.";
+  else msg.textContent="Couldn't get your location. Check that Location Services is on, then tap the button again.";
+  $("start").disabled=false; $("start").textContent="Try again";
+}
+
+// ---------- App (Android) features: background tracking, alerts, banner ----------
+const CAP=window.Capacitor, NATIVE=!!(CAP && CAP.isNativePlatform && CAP.isNativePlatform());
+const PL=NATIVE?CAP.Plugins:{};
+const AD_BANNER_ID="ca-app-pub-3940256099942544/6300978111";   // Google's TEST banner. Swap for your real one before publishing.
+let chaseMode=false; try{ chaseMode=localStorage.getItem("snail-chase")==="on"; }catch(e){}
+let watchId=null;
+
+// Every location fix, from the browser or the app, comes through here.
+function onFix(me,acc){
+  gpsOK=true;
+  $("gps").textContent="GPS ±"+Math.round(acc)+" m";
+  if(!running){ run(me,acc); return; }
+  arrive(me,acc);
+  if(document.hidden) scheduleAlerts();
+}
+function onFixError(err){
+  if(!running){ locError(err); return; }
+  $("gps").textContent="GPS signal lost";
+}
+function startWatch(){
+  if(!NATIVE){
+    watchId=navigator.geolocation.watchPosition(
+      p=>onFix({lat:p.coords.latitude,lng:p.coords.longitude},p.coords.accuracy),
+      onFixError,{enableHighAccuracy:true,maximumAge:5000,timeout:30000});
+    return;
+  }
+  // With a background message, Android keeps tracking (with a notification) while the app is closed.
+  const opts={requestPermissions:true, stale:false, distanceFilter:10};
+  if(chaseMode){ opts.backgroundTitle="The snail is chasing you"; opts.backgroundMessage="Snail Game is following your location. Tap to open."; }
+  PL.BackgroundGeolocation.addWatcher(opts,(loc,err)=>{
+    if(err){ onFixError({code: err.code==="NOT_AUTHORIZED"?1:2}); return; }
+    if(loc) onFix({lat:loc.latitude,lng:loc.longitude},loc.accuracy);
+  }).then(id=>watchId=id);
+}
+async function restartWatch(){
+  if(NATIVE && watchId!==null){ try{ await PL.BackgroundGeolocation.removeWatcher({id:watchId}); }catch(e){} }
+  watchId=null;
+  startWatch();
+}
+
+// Must run straight from a tap so the phone shows its permission prompt.
+function askLocation(){
+  if(typeof L==="undefined"){ $("locMsg").hidden=false; $("locMsg").textContent="The map couldn't load. Check your internet connection and try again."; return; }
+  if(!NATIVE && !navigator.geolocation){ locError(null); return; }
+  $("start").disabled=true; $("start").textContent="Finding you…";
+  $("locMsg").hidden=false; $("locMsg").textContent="Tap Allow if your phone asks.";
+  restartWatch();
+}
+
+// Notifications: live ones while the app is in the background, plus scheduled ones that
+// fire even when the app is fully closed (the snail's arrival time is predictable).
+function notifyNow(text){
+  if(!NATIVE || !document.hidden) return;
+  PL.LocalNotifications.schedule({notifications:[{id:Math.floor(Math.random()*1e6)+1000, title:"Snail Game", body:text}]}).catch(()=>{});
+}
+const ALERT_IDS=[101,102,103,104,105];
+let alertSig="";
+function scheduleAlerts(){
+  if(!NATIVE || !state || state.caughtAt || !state.me) return;
+  const now=Date.now(), d=distM(state.snail,state.me), speed=state.speedKmh/3.6;
+  const arriveAt=Math.max(now,state.pausedUntil)+Math.max(0,d-CATCH_M)/speed*1000;
+  const list=[
+    [101, arriveAt-3600000, "The snail is 1 hour away. Time to move."],
+    [102, arriveAt-600000,  "The snail is 10 minutes away! Move now."],
+    [103, arriveAt,         "The snail is on you! You have 30 seconds."],
+    [104, state.nextGoldAt, "Gold salt is ready. Open Snail Game to reveal it. You'll have 1 hour."],
+    [105, state.pausedUntil,"Your salt wore off. The snail is moving again."],
+  ].filter(([,t])=>t>now+30000);
+  const sig=list.map(([id,t])=>id+":"+Math.round(t/60000)).join(",");
+  if(sig===alertSig) return;   // nothing moved by a minute or more
+  alertSig=sig;
+  PL.LocalNotifications.cancel({notifications:ALERT_IDS.map(id=>({id}))}).catch(()=>{}).finally(()=>{
+    if(list.length) PL.LocalNotifications.schedule({notifications:list.map(([id,t,body])=>({id,title:"Snail Game",body,schedule:{at:new Date(t),allowWhileIdle:true}}))}).catch(()=>{});
+  });
+}
+function cancelAlerts(){
+  if(!NATIVE) return;
+  alertSig="";
+  PL.LocalNotifications.cancel({notifications:ALERT_IDS.map(id=>({id}))}).catch(()=>{});
+}
+
+// Small banner at the bottom of the map. Hidden whenever a full-screen card is open.
+let adReady=false;
+function setupAds(){
+  if(!NATIVE || !PL.AdMob) return;
+  PL.AdMob.initialize({})
+    .then(()=>PL.AdMob.showBanner({adId:AD_BANNER_ID, adSize:"BANNER", position:"BOTTOM_CENTER", margin:0, isTesting:true}))
+    .then(()=>{ adReady=true; document.documentElement.style.setProperty("--ad-h","50px"); })
+    .catch(()=>{});
+}
+function adShown(on){
+  if(!adReady) return;
+  (on?PL.AdMob.resumeBanner():PL.AdMob.hideBanner()).catch(()=>{});
+  document.documentElement.style.setProperty("--ad-h", on?"50px":"0px");
+}
+
+function setChaseLabel(){ $("chaseBtn").textContent="Chase mode: "+(chaseMode?"on":"off"); $("chaseBtn").classList.toggle("primary",chaseMode); }
+$("chaseBtn").onclick=()=>{
+  if(chaseMode){
+    chaseMode=false; try{ localStorage.setItem("snail-chase","off"); }catch(e){}
+    setChaseLabel(); restartWatch();
+    toast("Chase mode off. The app only tracks you while it's open.");
+    return;
+  }
+  adShown(false); $("chaseModal").hidden=false;   // explain before asking (Google requires this)
+};
+$("chaseYes").onclick=async()=>{
+  $("chaseModal").hidden=true; adShown(true);
+  chaseMode=true; try{ localStorage.setItem("snail-chase","on"); }catch(e){}
+  setChaseLabel();
+  try{ await PL.LocalNotifications.requestPermissions(); }catch(e){}
+  restartWatch();
+  toast("Chase mode on. The snail follows you even with the app closed.");
+};
+$("chaseNo").onclick=()=>{ $("chaseModal").hidden=true; adShown(true); };
+
+// Coming back after the page was closed or in the background: the snail spent that time
+// chasing where you are NOW, not where you left. Travel while away counts as a straight line.
+function arrive(me,acc){
+  waitingForFix=false;
+  if(!state || state.caughtAt) return;
+  if(acc<=MAX_ACCURACY_M){
+    const moved=distM(state.lastFix,me);
+    if(moved>=Math.max(15,acc)){ state.walkedM+=moved; state.lastFix=me; }
+    state.me=me;
+  }
+  tick();
+}
+document.addEventListener("visibilitychange",()=>{
+  if(!running) return;
+  if(document.hidden){
+    tick(); scheduleAlerts();
+    if(!(NATIVE && chaseMode)) waitingForFix=true;   // freeze the books until we know where you are
+    return;
+  }
+  cancelAlerts();
+  if(!waitingForFix) return;
+  if(!NATIVE) navigator.geolocation.getCurrentPosition(
+    p=>arrive({lat:p.coords.latitude,lng:p.coords.longitude},p.coords.accuracy),
+    ()=>{ waitingForFix=false; tick(); },
+    {enableHighAccuracy:true,maximumAge:0,timeout:15000});
+  setTimeout(()=>{ if(waitingForFix){ waitingForFix=false; tick(); } },15000);   // no fix: carry on from the last known spot
+});
+
+function run(me,acc){
+  if(running) return; running=true;
+  $("startModal").hidden=true; $("hud").hidden=false;
+  $("gps").textContent="GPS ±"+Math.round(acc)+" m";
+  initMap(me);
+  if(state && state.me){ arrive(me,acc); map.fitBounds(L.latLngBounds([state.me,state.snail]).pad(.3)); }
+  else spawn(me);
+  setInterval(tick,2000);
+  if(NATIVE){
+    $("chaseBtn").hidden=false; setChaseLabel();
+    PL.LocalNotifications.requestPermissions().catch(()=>{});
+    setupAds();
+  }
+}
+
+$("start").onclick=()=>{
+  if(running){ $("startModal").hidden=true; adShown(true); spawn(state.me); }
+  else askLocation();
+};
+function newSnail(){
+  $("caughtModal").hidden=true;
+  document.querySelector("#startModal h1").textContent="🐌 New snail";
+  $("start").disabled=false; $("start").textContent="Release the snail";
+  $("locMsg").hidden=true;
+  $("startModal").hidden=false; adShown(false);
+}
+$("findSnail").onclick=()=>state&&map.setView(state.snail,17);
+$("findMe").onclick=()=>state&&map.setView(state.me,17);
+$("findSalt").onclick=()=>{
+  if(!state||!state.salts.length){ toast("No salt on the map right now. Crystals appear at random every few hours."); return; }
+  const n=state.salts.reduce((a,b)=>distM(state.me,a)<distM(state.me,b)?a:b);
+  map.setView(n,17); saltMarkers[n.id]&&saltMarkers[n.id].openPopup();
+};
+$("giveUp").onclick=newSnail;
+$("showBoard").onclick=()=>{ renderBoard($("boardMain")); $("boardModal").hidden=false; adShown(false); };
+$("closeBoard").onclick=()=>{ $("boardModal").hidden=true; adShown(true); };
+function backupMsg(t){ $("backupMsg").hidden=false; $("backupMsg").textContent=t; }
+$("copyBackup").onclick=()=>{
+  tick();
+  const code="SNAIL1:"+btoa(unescape(encodeURIComponent(JSON.stringify({state, runs:loadRuns()}))));
+  const box=$("backupBox"); box.value=code; box.hidden=false;
+  const fallback=()=>{ box.focus(); box.select(); backupMsg("Code selected. Copy it with your phone's Copy option."); };
+  if(navigator.clipboard) navigator.clipboard.writeText(code).then(()=>backupMsg("Backup code copied. Paste it somewhere safe."),fallback);
+  else fallback();
+};
+$("showRestore").onclick=()=>{ $("restoreArea").hidden=false; $("restoreBox").focus(); };
+$("doRestore").onclick=()=>{
+  try{
+    const raw=$("restoreBox").value.trim();
+    if(!raw.startsWith("SNAIL1:")) throw 0;
+    const data=JSON.parse(decodeURIComponent(escape(atob(raw.slice(7)))));
+    if(!data.state || !data.state.snail) throw 0;
+    localStorage.setItem(KEY, JSON.stringify(data.state));
+    saveRuns(data.runs||[]);
+    backupMsg("Restored. Reloading…");
+    setTimeout(()=>location.reload(),800);
+  }catch(e){ backupMsg("That code didn't work. Make sure you pasted the whole thing, starting with SNAIL1:"); }
+};
+$("again").onclick=newSnail;
+
+// Returning player: the snail kept crawling while you were away.
+if(state && state.me){
+  $("speed").value=String(state.speedKmh);
+  document.querySelector("#startModal h1").textContent="🐌 It's still coming";
+  $("start").textContent="Allow location & check on the snail";
+}
+</script>
+</body>
+</html>

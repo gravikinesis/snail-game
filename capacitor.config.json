@@ -1,0 +1,8 @@
+{
+  "appId": "com.gravikinesis.snailgame",
+  "appName": "Snail Game",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
